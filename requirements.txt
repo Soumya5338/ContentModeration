@@ -1,0 +1,7 @@
+datasets
+pandas
+scikit-learn
+flask
+numpy
+joblib
+shap
