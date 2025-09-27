@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Content-Aware Moderation</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React, ReactDOM, and Babel for JSX -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Font Awesome for the microphone icon -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a; /* A deep slate-900 background */
+        }
+        .input-button {
+            background-color: transparent;
+            border: none;
+            padding: 0;
+            margin-left: 1rem; /* 4 units of Tailwind spacing */
+            cursor: pointer;
+            transition: transform 0.2s ease-in-out;
+        }
+        .input-button:hover {
+            transform: scale(1.1);
+        }
+        .input-button i {
+            font-size: 2rem; /* 32px */
+            color: #d1d5db; /* Gray-300 */
+        }
+        .progress-bar-container {
+            height: 12px;
+            background-color: #334155; /* Slate-700 */
+            border-radius: 9999px;
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+        }
+        .progress-bar {
+            height: 100%;
+            transition: width 0.8s ease-in-out;
+            animation: fadeIn 1s ease-in-out;
+        }
+        /* Define specific progress bar colors */
+        .bg-gradient-red {
+            background-image: linear-gradient(to right, #ef4444, #dc2626); /* Red-500 to Red-600 */
+        }
+        .bg-gradient-yellow {
+            background-image: linear-gradient(to right, #facc15, #ca8a04); /* Yellow-400 to Yellow-600 */
+        }
+        .bg-gradient-green-blue {
+            background-image: linear-gradient(to right, #2dd4bf, #34d399); /* Teal/Green for low scores */
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .result-item {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4 bg-indigo-950">
+
+    <div id="root" class="w-full max-w-2xl"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const BACKEND_URL = "http://localhost:5000/predict";
+
+        const App = () => {
+            const [parentComment, setParentComment] = useState("");
+            const [replyComment, setReplyComment] = useState("");
+            const [conversation, setConversation] = useState([]);
+            const [message, setMessage] = useState("");
+            const [isLoading, setIsLoading] = useState(false);
+
+            const showMessage = (text, duration = 3000) => {
+                setMessage(text);
+                setTimeout(() => setMessage(""), duration);
+            };
+
+            const handleSpeechInput = (field) => {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+                if (!SpeechRecognition) {
+                    showMessage("Speech recognition is not supported in this browser.");
+                    return;
+                }
+
+                const recognition = new SpeechRecognition();
+                recognition.lang = "en-US";
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    if (field === "parent") {
+                        setParentComment(prev => (prev + " " + transcript).trim());
+                    } else {
+                        setReplyComment(prev => (prev + " " + transcript).trim());
+                    }
+                };
+
+                recognition.onerror = (event) => {
+                    console.error("Speech recognition error:", event.error);
+                };
+
+                recognition.start();
+            };
+
+            const handleSubmit = async () => {
+                if (!parentComment || !replyComment) {
+                    showMessage("Please enter both parent and reply comments.");
+                    return;
+                }
+
+                setIsLoading(true);
+
+                try {
+                    const response = await fetch(BACKEND_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ parent: parentComment, reply: replyComment }),
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(`Server returned status ${response.status}: ${errorData.error || 'Unknown error'}`);
+                    }
+
+                    const data = await response.json();
+                    setConversation(prev => [
+                        {
+                            id: prev.length + 1,
+                            parent: parentComment,
+                            reply: replyComment,
+                            result: data,
+                        },
+                        ...prev,
+                    ]);
+
+                    setParentComment("");
+                    setReplyComment("");
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+                } catch (error) {
+                    console.error("Fetch failed:", error);
+                    showMessage(`Analysis failed: ${error.message}`);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const handleGenerateReply = () => {
+                // Since there is no API key, we will display a message instead of making an API call.
+                const newReply = "This feature requires a valid API key for the Gemini model.";
+                setReplyComment(newReply);
+                showMessage(newReply);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+            
+            const getProgressColor = (score) => {
+                if (score > 70) {
+                    return "bg-gradient-red"; // High risk
+                } else if (score > 40) {
+                    return "bg-gradient-yellow"; // Medium risk
+                } else {
+                    return "bg-gradient-green-blue"; // Low risk
+                }
+            };
+
+            const ProgressBar = ({ score }) => (
+                <div class="progress-bar-container mt-1">
+                    <div 
+                        class={`progress-bar ${getProgressColor(score)}`} 
+                        style={{ width: `${score}%` }}
+                    ></div>
+                </div>
+            );
+
+            return (
+                <div className="bg-slate-900 p-8 sm:p-12 rounded-3xl shadow-2xl w-full border border-indigo-800">
+                    <h1 class="text-3xl sm:text-4xl font-extrabold mb-8 text-center bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-purple-500">
+                        Content-Aware Moderation
+                    </h1>
+
+                    {message && (
+                        <div className="bg-blue-950 border border-blue-500 text-blue-200 p-4 mb-6 rounded-xl" role="alert">
+                            <p>{message}</p>
+                        </div>
+                    )}
+
+                    {/* Parent Comment with Mic */}
+                    <div className="flex items-center mb-6">
+                        <input
+                            type="text"
+                            placeholder="Enter Parent Comment"
+                            value={parentComment}
+                            onChange={(e) => setParentComment(e.target.value)}
+                            class="flex-1 p-4 bg-slate-800 text-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all shadow-md placeholder-gray-400"
+                        />
+                        <button onClick={() => handleSpeechInput("parent")} class="input-button">
+                            <i class="fas fa-microphone text-teal-400 hover:text-cyan-400"></i>
+                        </button>
+                    </div>
+
+                    {/* Reply Comment with Mic */}
+                    <div className="flex items-center mb-10">
+                        <input
+                            type="text"
+                            placeholder="Enter Reply Comment"
+                            value={replyComment}
+                            onChange={(e) => setReplyComment(e.target.value)}
+                            class="flex-1 p-4 bg-slate-800 text-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all shadow-md placeholder-gray-400"
+                        />
+                        <button onClick={() => handleSpeechInput("reply")} class="input-button">
+                            <i class="fas fa-microphone text-teal-400 hover:text-cyan-400"></i>
+                        </button>
+                    </div>
+
+                    <button 
+                        onClick={handleSubmit} 
+                        disabled={isLoading}
+                        class={`w-full p-4 rounded-xl font-bold text-lg text-white transition-all duration-300 shadow-lg transform ${
+                            isLoading 
+                                ? 'bg-gray-500 cursor-not-allowed flex items-center justify-center' 
+                                : 'bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-700 hover:to-cyan-700 hover:scale-[1.01]'
+                        }`}
+                    >
+                        {isLoading ? (
+                            <>
+                                <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Analyzing (First call takes time...)
+                            </>
+                        ) : (
+                            "Analyze"
+                        )}
+                    </button>
+
+                    {/* Conversation list */}
+                    <div class="mt-12 space-y-8">
+                        {conversation.length > 0 ? (
+                            conversation.map((item) => (
+                                <div key={item.id} class="result-item bg-slate-800 p-6 rounded-2xl shadow-inner border border-slate-700">
+                                    <div class="flex justify-between items-start mb-4">
+                                        <div>
+                                            <p class="text-base font-semibold text-gray-300 mb-2">
+                                                Parent: <span class="font-normal text-gray-400">{item.parent}</span>
+                                            </p>
+                                            <p class="text-base font-semibold text-gray-300">
+                                                Reply: <span class="font-normal text-gray-400">{item.reply}</span>
+                                            </p>
+                                        </div>
+                                        {/* NEW: Latency Display */}
+                                        <p class="text-xs font-medium text-purple-400 bg-purple-900/50 px-3 py-1 rounded-full whitespace-nowrap ml-4">
+                                            {item.result?.latency_ms ? `Time: ${item.result.latency_ms}ms` : 'Timing N/A'}
+                                        </p>
+                                    </div>
+                                    
+                                    <div class="mt-6 pt-6 border-t border-slate-700 space-y-4">
+                                        <h3 class="font-bold text-lg text-gray-200">Analysis Summary</h3>
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6 text-sm">
+                                            <div>
+                                                <p class="font-semibold text-gray-300 mb-1">Reply Toxicity Score: <span class="font-normal text-gray-400">{item.result?.reply_score}%</span></p>
+                                                <ProgressBar score={item.result?.reply_score} />
+                                            </div>
+                                            <div>
+                                                <p class="font-semibold text-gray-300 mb-1">LLM Severity: <span class="font-normal text-red-400">{item.result?.severity}</span></p>
+                                                <div class="progress-bar-container mt-1">
+                                                    {/* LLM Severity Bar - Purely illustrative based on severity level */}
+                                                    <div 
+                                                        class={`progress-bar ${
+                                                            item.result?.severity === 'High' ? 'bg-gradient-red' : 
+                                                            item.result?.severity === 'Medium' ? 'bg-gradient-yellow' : 
+                                                            'bg-gradient-green-blue'
+                                                        }`} 
+                                                        style={{ width: 
+                                                            item.result?.severity === 'High' ? '90%' : 
+                                                            item.result?.severity === 'Medium' ? '60%' : 
+                                                            '30%' 
+                                                        }}
+                                                    ></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <p class="pt-2 font-semibold text-gray-300">Reason: <span class="font-normal text-gray-400">{item.result?.reason}</span></p>
+                                        <p class="mt-1 font-semibold text-gray-300">Suggestion: <span class="font-normal text-gray-400">{item.result?.suggestion}</span></p>
+                                        
+                                        {/* De-escalation Toolkit */}
+                                        {item.result?.suggestion === "Flag reply for moderation." && (
+                                            <div class="mt-4 pt-4 border-t border-slate-700">
+                                                <p class="font-semibold text-gray-300">Moderation Toolkit:</p>
+                                                <div class="flex flex-col sm:flex-row items-stretch sm:items-center mt-2 space-y-2 sm:space-y-0 sm:space-x-2">
+                                                    <button 
+                                                        onClick={handleGenerateReply}
+                                                        class="w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-sm font-semibold rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-colors duration-300"
+                                                    >
+                                                        Generate a Polite Reply
+                                                    </button>
+                                                    <button class="w-full sm:w-auto px-4 py-2 bg-gray-600 text-white text-sm font-semibold rounded-lg hover:bg-gray-700 transition-colors duration-300">Mute Conversation</button>
+                                                    <button class="w-full sm:w-auto px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors duration-300">Report to Platform</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div class="text-center text-gray-500 mt-12 p-6 rounded-lg bg-slate-900 border-2 border-dashed border-slate-700">
+                                <p>Start a conversation by entering a parent comment and a reply.</p>
+                                <p class="mt-2 text-xs">Analysis results will appear here.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
